@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestor de Investigación Jurídica</title>
+  <!-- Tailwind CSS desde CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- jsPDF para exportar a PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    .enlace {
+      color: #2563eb;
+      cursor: pointer;
+    }
+    .enlace:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans">
+  <!-- Estructura principal: Sidebar y área de contenido -->
+  <div class="flex h-screen">
+    <!-- Sidebar de navegación -->
+    <div class="w-64 bg-white shadow-md p-4 overflow-y-auto">
+      <h2 class="text-xl font-bold mb-6">Mis Proyectos</h2>
+      <ul class="space-y-2">
+        <li><button onclick="mostrarSeccion('proyectos')" class="w-full text-left">📁 Mis proyectos</button></li>
+        <li><button onclick="mostrarSeccion('pantalla-proyecto')" class="w-full text-left">📌 Ver Proyecto (vinculados)</button></li>
+        <li><button onclick="mostrarSeccion('notas')" class="w-full text-left">📝 Notas</button></li>
+        <li><button onclick="mostrarSeccion('tareas')" class="w-full text-left">✅ Tareas</button></li>
+        <li><button onclick="mostrarSeccion('fichas')" class="w-full text-left">📚 Fichas bibliográficas</button></li>
+        <li><button onclick="mostrarSeccion('archivos')" class="w-full text-left">📎 Archivos</button></li>
+        <li><button onclick="mostrarSeccion('busqueda')" class="w-full text-left">🔍 Búsqueda</button></li>
+        <li><button onclick="mostrarSeccion('exportar')" class="w-full text-left">📤 Exportar proyecto</button></li>
+      </ul>
+      <!-- Botones de copia de seguridad -->
+      <button onclick="backupDatos()" class="bg-red-600 text-white px-4 py-2 rounded mt-4 w-full">Backup</button>
+      <button onclick="restoreBackupDatos()" class="bg-green-600 text-white px-4 py-2 rounded mt-4 w-full">Restaurar copia de seguridad</button>
+      <!-- Input oculto para restaurar backup -->
+      <input type="file" id="backupInput" style="display: none;" onchange="handleBackupFile(event)">
+    </div>
+
+    <!-- Área principal para mostrar módulos -->
+    <div class="flex-1 p-6 overflow-auto">
+      <div id="app"></div>
+    </div>
+  </div>
+
+  <script>
+    // --------------------------------------------------
+    // VARIABLES GLOBALES: Datos en LocalStorage
+    // --------------------------------------------------
+    let proyectos = JSON.parse(localStorage.getItem('proyectos') || '[]');
+    let notas = JSON.parse(localStorage.getItem('notas') || '[]');
+    let tareas = JSON.parse(localStorage.getItem('tareas') || '[]');
+    let fichas = JSON.parse(localStorage.getItem('fichas') || '[]');
+    let archivos = JSON.parse(localStorage.getItem('archivos') || '[]');
+    let proyectoActivo = null;
+    let tareaEditando = null;  // Control para edición de tareas
+
+    // --------------------------------------------------
+    // FUNCIONES UTILITARIAS
+    // --------------------------------------------------
+    // Función para convertir texto en un "slug" (identificador sencillo)
+    function slugify(text) {
+      return text.toString().toLowerCase().trim().replace(/[\s\W-]+/g, "-");
+    }
+
+    // Convierte las menciones @tipo:titulo en enlaces clicables
+    function parseAtLinks(text) {
+      return text.replace(/@(\w+):([^\@\n]+)/g, function(match, p1, p2) {
+        let tipo = p1.trim().toLowerCase();
+        let titulo = p2.trim();
+        return `<a href="#" class="enlace" onclick="seguirEnlace('${tipo}','${titulo}')">@${tipo}:${titulo}</a>`;
+      });
+    }
+
+    // Función para redirigir según el tipo (proyectos, notas, tareas, fichas o archivos)
+    function seguirEnlace(tipo, titulo) {
+      if(tipo === "proyectos") {
+        verProyectoLink(titulo);
+      } else if(tipo === "notas") {
+        verNota(titulo);
+      } else if(tipo === "tareas") {
+        verTarea(titulo);
+      } else if(tipo === "fichas") {
+        verFicha(titulo);
+      } else if(tipo === "archivos") {
+        verArchivo(titulo);
+      } else {
+        alert("Tipo de enlace desconocido.");
+      }
+    }
+
+    function verProyectoLink(titulo) {
+      let p = proyectos.find(proj => proj.titulo === titulo);
+      if(p){
+        proyectoActivo = p.id;
+        mostrarSeccion('pantalla-proyecto');
+        setTimeout(() => {
+          let el = document.getElementById("proyecto-" + slugify(titulo));
+          if(el) el.scrollIntoView({ behavior: "smooth" });
+        }, 100);
+      } else {
+        alert("Proyecto no encontrado.");
+      }
+    }
+    function verNota(titulo) {
+      mostrarSeccion('notas');
+      setTimeout(() => {
+        let el = document.getElementById("nota-" + slugify(titulo));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+    function verTarea(titulo) {
+      mostrarSeccion('tareas');
+      setTimeout(() => {
+        let el = document.getElementById("tarea-" + slugify(titulo));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+    function verFicha(titulo) {
+      mostrarSeccion('fichas');
+      setTimeout(() => {
+        let el = document.getElementById("ficha-" + slugify(titulo));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+    function verArchivo(nombre) {
+      mostrarSeccion('archivos');
+      setTimeout(() => {
+        let el = document.getElementById("archivo-" + slugify(nombre));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+
+    // Captura la pulsación de "@" e inserta el vínculo
+    function handleAtKey(e) {
+      if (e.key === '@') {
+        e.preventDefault();
+        insertarEnlace(e.target);
+      }
+    }
+
+    function insertarEnlace(element) {
+      let tipo = prompt("Enlace: ¿Con qué deseas enlazar? (Escribe 'proyectos', 'notas', 'tareas', 'fichas' o 'archivos')");
+      if (!tipo) return;
+      tipo = tipo.toLowerCase();
+      let items = [];
+      if (tipo === 'proyectos') {
+        items = proyectos;
+      } else if (tipo === 'notas') {
+        items = notas.filter(n => n.proyectoId === proyectoActivo);
+      } else if (tipo === 'tareas') {
+        items = tareas.filter(t => t.proyectoId === proyectoActivo);
+      } else if (tipo === 'fichas') {
+        items = fichas.filter(f => f.proyectoId === proyectoActivo);
+      } else if (tipo === 'archivos') {
+        items = archivos.filter(a => a.proyectoId === proyectoActivo);
+      } else {
+        alert("Tipo no válido.");
+        return;
+      }
+      let listaItems = items.map(item => item.titulo ? item.titulo : (item.nombre ? item.nombre : '')).join(", ");
+      let tituloItem = prompt("Items disponibles: " + listaItems + "\nEscribe el título del ítem al que deseas enlazar:");
+      if (!tituloItem) return;
+      let linkText = "@" + tipo + ":" + tituloItem;
+      if (element.isContentEditable) {
+        document.execCommand('insertHTML', false, `<a href="#" class="enlace" onclick="seguirEnlace('${tipo}','${tituloItem}')">${linkText}</a>`);
+      } else if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+        let start = element.selectionStart;
+        let end = element.selectionEnd;
+        let text = element.value;
+        element.value = text.substring(0, start) + linkText + text.substring(end);
+        element.selectionStart = element.selectionEnd = start + linkText.length;
+      } else {
+        element.value += linkText;
+      }
+    }
+
+    // --------------------------------------------------
+    // FUNCIONES DE NAVEGACIÓN ENTRE SECCIONES
+    // --------------------------------------------------
+    function mostrarSeccion(seccion) {
+      const secciones = {
+        'proyectos': renderProyectos,
+        'pantalla-proyecto': renderPantallaProyecto,
+        'notas': renderNotas,
+        'tareas': renderTareas,
+        'fichas': renderFichas,
+        'archivos': renderArchivos,
+        'busqueda': renderBusqueda,
+        'exportar': renderExportar
+      };
+      if (secciones[seccion]) secciones[seccion]();
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE PROYECTOS
+    // --------------------------------------------------
+    function renderProyectos() {
+      const app = document.getElementById('app');
+      const div = document.createElement('div');
+      div.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Mis Proyectos</h2>
+        <input type="text" id="nuevoTitulo" placeholder="Título del proyecto" class="border p-2 rounded w-full mb-2">
+        <input type="text" id="nuevoResumen" placeholder="Resumen" class="border p-2 rounded w-full mb-2">
+        <button onclick="crearProyecto()" class="bg-blue-600 text-white px-4 py-2 rounded">Crear proyecto</button>
+        <ul id="listaProyectos" class="mt-6 space-y-2"></ul>`;
+      app.innerHTML = '';
+      app.appendChild(div);
+      document.getElementById('nuevoTitulo').addEventListener('keydown', handleAtKey);
+      document.getElementById('nuevoResumen').addEventListener('keydown', handleAtKey);
+      actualizarListaProyectos();
+    }
+
+    function crearProyecto() {
+      const titulo = document.getElementById('nuevoTitulo').value.trim();
+      const resumen = document.getElementById('nuevoResumen').value.trim();
+      if (!titulo || !resumen) return alert('Debes completar título y resumen.');
+      proyectos.push({ id: Date.now(), titulo, resumen });
+      localStorage.setItem('proyectos', JSON.stringify(proyectos));
+      renderProyectos();
+    }
+
+    function eliminarProyecto(id) {
+      if (!confirm('¿Seguro que deseas eliminar este proyecto?')) return;
+      proyectos = proyectos.filter(p => p.id !== id);
+      // Eliminamos los documentos asociados
+      notas = notas.filter(n => n.proyectoId !== id);
+      tareas = tareas.filter(t => t.proyectoId !== id);
+      fichas = fichas.filter(f => f.proyectoId !== id);
+      archivos = archivos.filter(a => a.proyectoId !== id);
+      localStorage.setItem('proyectos', JSON.stringify(proyectos));
+      localStorage.setItem('notas', JSON.stringify(notas));
+      localStorage.setItem('tareas', JSON.stringify(tareas));
+      localStorage.setItem('fichas', JSON.stringify(fichas));
+      localStorage.setItem('archivos', JSON.stringify(archivos));
+      renderProyectos();
+    }
+
+    function actualizarListaProyectos() {
+      const lista = document.getElementById('listaProyectos');
+      lista.innerHTML = '';
+      proyectos.forEach(p => {
+        const li = document.createElement('li');
+        li.id = "proyecto-" + slugify(p.titulo);
+        li.className = 'bg-white border p-4 rounded shadow flex justify-between items-center';
+        li.innerHTML = `<div>
+                            <strong>${p.titulo}</strong><br>
+                            <small>${p.resumen}</small>
+                          </div>
+                          <div class="space-x-2">
+                            <button class="text-blue-600" onclick="abrirProyecto(${p.id})">Abrir</button>
+                            <button class="text-red-600" onclick="eliminarProyecto(${p.id})">Eliminar</button>
+                          </div>`;
+        lista.appendChild(li);
+      });
+    }
+
+    function abrirProyecto(id) {
+      proyectoActivo = id;
+      mostrarSeccion('pantalla-proyecto');
+    }
+
+    // --------------------------------------------------
+    // VISTA "VER PROYECTO" CON DOCUMENTOS RELACIONADOS
+    // --------------------------------------------------
+    // Ahora se listan todos los documentos que pertenecen al proyecto activo.
+    function renderPantallaProyecto() {
+      const app = document.getElementById('app');
+      const p = proyectos.find(p => p.id === proyectoActivo);
+      if (!p) return;
+      
+      // Se filtran todos los documentos que pertenezcan al proyecto
+      const notasVinculadas = notas.filter(n => n.proyectoId === p.id);
+      const tareasVinculadas = tareas.filter(t => t.proyectoId === p.id);
+      const fichasVinculadas = fichas.filter(f => f.proyectoId === p.id);
+      const archivosVinculados = archivos.filter(a => a.proyectoId === p.id);
+
+      app.innerHTML = `
+        <div class="space-y-6">
+          <h2 class="text-3xl font-bold">📌 ${p.titulo}</h2>
+          <p class="text-gray-600">${p.resumen}</p>
+          <!-- Dashboard resumen -->
+          <div class="bg-white p-4 rounded shadow">
+            <p class="text-sm"><strong>Resumen de documentos:</strong></p>
+            <p class="text-sm">Notas: ${notasVinculadas.length} | Tareas: ${tareasVinculadas.length} | Fichas: ${fichasVinculadas.length} | Archivos: ${archivosVinculados.length}</p>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Notas -->
+            <div class="bg-white p-4 rounded shadow">
+              <h3 class="text-xl font-semibold mb-2">📝 Notas</h3>
+              <ul class="text-sm space-y-1">
+                ${notasVinculadas.length ? notasVinculadas.map(n => `
+                  <li class="flex justify-between items-center">
+                    <span>${n.titulo}</span>
+                    <div class="space-x-1">
+                      <button onclick="verNota('${n.titulo}')" class="text-blue-600 text-sm">Abrir</button>
+                      <button onclick="eliminarNota('${n.titulo}')" class="text-red-600 text-sm">Eliminar</button>
+                    </div>
+                  </li>`).join('') : "<li>No hay notas.</li>"}
+              </ul>
+            </div>
+            <!-- Tareas -->
+            <div class="bg-white p-4 rounded shadow">
+              <h3 class="text-xl font-semibold mb-2">✅ Tareas</h3>
+              <ul class="text-sm space-y-1">
+                ${tareasVinculadas.length ? tareasVinculadas.map(t => `
+                  <li class="flex justify-between items-center">
+                    <span>${t.titulo}</span>
+                    <div class="space-x-1">
+                      <button onclick="verTarea('${t.titulo}')" class="text-blue-600 text-sm">Abrir</button>
+                      <button onclick="eliminarTarea(${t.id})" class="text-red-600 text-sm">Eliminar</button>
+                    </div>
+                  </li>`).join('') : "<li>No hay tareas.</li>"}
+              </ul>
+            </div>
+            <!-- Fichas -->
+            <div class="bg-white p-4 rounded shadow">
+              <h3 class="text-xl font-semibold mb-2">📚 Fichas bibliográficas</h3>
+              <ul class="text-sm space-y-1">
+                ${fichasVinculadas.length ? fichasVinculadas.map(f => `
+                  <li class="flex justify-between items-center">
+                    <span>${f.titulo}</span>
+                    <div class="space-x-1">
+                      <button onclick="verFicha('${f.titulo}')" class="text-blue-600 text-sm">Abrir</button>
+                      <button onclick="eliminarFicha('${f.titulo}')" class="text-red-600 text-sm">Eliminar</button>
+                      <button onclick="exportFichaBibTeX('${f.titulo}')" class="text-purple-600 text-sm">BibTeX</button>
+                    </div>
+                  </li>`).join('') : "<li>No hay fichas.</li>"}
+              </ul>
+            </div>
+            <!-- Archivos -->
+            <div class="bg-white p-4 rounded shadow">
+              <h3 class="text-xl font-semibold mb-2">📎 Archivos</h3>
+              <ul class="text-sm space-y-1">
+                ${archivosVinculados.length ? archivosVinculados.map(a => `
+                  <li class="flex justify-between items-center">
+                    <span>${a.nombre}</span>
+                    <div class="space-x-1">
+                      <button onclick="verArchivo('${a.nombre}')" class="text-blue-600 text-sm">Abrir</button>
+                      <button onclick="eliminarArchivo('${a.nombre}')" class="text-red-600 text-sm">Eliminar</button>
+                    </div>
+                  </li>`).join('') : "<li>No hay archivos.</li>"}
+              </ul>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE NOTAS
+    // --------------------------------------------------
+    function renderNotas() {
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Notas</h2>
+        <input type="text" id="tituloNota" placeholder="Título de la nota" class="border p-2 rounded w-full mb-2">
+        <div id="contenidoNota" contenteditable="true" class="border p-2 bg-white rounded min-h-[100px] mb-2"></div>
+        <button onclick="guardarNota()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar nota</button>
+        <div id="listaNotas" class="mt-4 space-y-2"></div>`;
+      document.getElementById('app').innerHTML = '';
+      document.getElementById('app').appendChild(container);
+      document.getElementById('contenidoNota').addEventListener('keydown', handleAtKey);
+      renderizarNotas();
+    }
+
+    function guardarNota() {
+      const titulo = document.getElementById('tituloNota').value.trim();
+      const contenido = document.getElementById('contenidoNota').innerHTML.trim();
+      if (!titulo || !contenido) {
+        return alert('Debes completar tanto el título como el contenido.');
+      }
+      if (!proyectoActivo) {
+        return alert('No se ha seleccionado ningún proyecto. Por favor, selecciona uno en "Mis Proyectos".');
+      }
+      const index = notas.findIndex(n => n.titulo === titulo && n.proyectoId === proyectoActivo);
+      if (index >= 0) notas.splice(index, 1);
+      notas.push({ titulo, contenido, proyectoId: proyectoActivo });
+      localStorage.setItem('notas', JSON.stringify(notas));
+      renderizarNotas();
+    }
+
+    function eliminarNota(titulo) {
+      if (confirm('¿Eliminar esta nota?')) {
+        notas = notas.filter(n => !(n.titulo === titulo && n.proyectoId === proyectoActivo));
+        localStorage.setItem('notas', JSON.stringify(notas));
+        renderizarNotas();
+      }
+    }
+
+    function editarNota(titulo) {
+      const nota = notas.find(n => n.titulo === titulo && n.proyectoId === proyectoActivo);
+      if(nota){
+        document.getElementById('tituloNota').value = nota.titulo;
+        document.getElementById('contenidoNota').innerHTML = nota.contenido;
+      }
+    }
+
+    function renderizarNotas() {
+      const lista = document.getElementById('listaNotas');
+      lista.innerHTML = '';
+      const filtradas = notas.filter(n => n.proyectoId === proyectoActivo);
+      filtradas.forEach(n => {
+        const noteId = "nota-" + slugify(n.titulo);
+        const div = document.createElement('div');
+        div.id = noteId;
+        div.className = 'bg-white border rounded p-3';
+        div.innerHTML = `
+          <div class="flex justify-between items-center">
+            <strong>@${n.titulo}</strong>
+            <div class="space-x-1">
+              <button onclick="editarNota('${n.titulo}')" class="text-blue-600 text-sm">Editar</button>
+              <button onclick="eliminarNota('${n.titulo}')" class="text-red-600 text-sm">Eliminar</button>
+            </div>
+          </div>
+          <div class="mt-2">${parseAtLinks(n.contenido)}</div>
+        `;
+        lista.appendChild(div);
+      });
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE TAREAS
+    // --------------------------------------------------
+    function renderTareas() {
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Tareas</h2>
+        <input id="tituloTarea" type="text" placeholder="Título" class="border p-2 rounded w-full mb-2">
+        <textarea id="descripcionTarea" placeholder="Descripción (usa @ para vincular)" class="border p-2 rounded w-full mb-2"></textarea>
+        <input id="fechaTarea" type="datetime-local" class="border p-2 rounded w-full mb-2">
+        <button id="btnGuardarTarea" onclick="agregarTarea()" class="bg-green-600 text-white px-4 py-2 rounded">Agregar tarea</button>
+        <ul id="listaTareas" class="mt-4 space-y-2"></ul>`;
+      document.getElementById('app').innerHTML = '';
+      document.getElementById('app').appendChild(container);
+      document.getElementById('descripcionTarea').addEventListener('keydown', handleAtKey);
+      renderizarTareas();
+    }
+
+    function agregarTarea() {
+      const titulo = document.getElementById('tituloTarea').value.trim();
+      const descripcion = document.getElementById('descripcionTarea').value.trim();
+      const fecha = document.getElementById('fechaTarea').value;
+      if (!titulo || !fecha) {
+        return alert('Debes completar al menos el título y la fecha.');
+      }
+      if (!proyectoActivo) {
+        return alert('No se ha seleccionado ningún proyecto. Por favor, selecciona uno en "Mis Proyectos".');
+      }
+      if(tareaEditando){  
+        const indice = tareas.findIndex(t => t.id === tareaEditando);
+        if(indice >= 0){
+          tareas[indice].titulo = titulo;
+          tareas[indice].descripcion = descripcion;
+          tareas[indice].fecha = fecha;
+        }
+        tareaEditando = null;
+        document.getElementById('btnGuardarTarea').textContent = "Agregar tarea";
+      } else {
+        const nuevaTarea = { id: Date.now(), titulo, descripcion, fecha, proyectoId: proyectoActivo, completada: false };
+        tareas.push(nuevaTarea);
+      }
+      localStorage.setItem('tareas', JSON.stringify(tareas));
+      document.getElementById('tituloTarea').value = "";
+      document.getElementById('descripcionTarea').value = "";
+      document.getElementById('fechaTarea').value = "";
+      renderizarTareas();
+    }
+
+    function editarTarea(id) {
+      const tarea = tareas.find(t => t.id === id && t.proyectoId === proyectoActivo);
+      if (!tarea) return;
+      document.getElementById('tituloTarea').value = tarea.titulo;
+      document.getElementById('descripcionTarea').value = tarea.descripcion;
+      document.getElementById('fechaTarea').value = tarea.fecha;
+      tareaEditando = id;
+      document.getElementById('btnGuardarTarea').textContent = "Modificar tarea";
+    }
+
+    function eliminarTarea(id) {
+      if(confirm("¿Eliminar esta tarea?")){
+        tareas = tareas.filter(t => t.id !== id);
+        localStorage.setItem('tareas', JSON.stringify(tareas));
+        renderizarTareas();
+      }
+    }
+
+    function renderizarTareas() {
+      const lista = document.getElementById('listaTareas');
+      lista.innerHTML = '';
+      const filtradas = tareas.filter(t => t.proyectoId === proyectoActivo);
+      filtradas.forEach(t => {
+        const tareaId = "tarea-" + slugify(t.titulo);
+        const li = document.createElement('li');
+        li.id = tareaId;
+        li.className = 'bg-white border rounded p-3 flex justify-between items-center';
+        li.innerHTML = `<div>
+                            <strong>${t.titulo}</strong>
+                            <p>${parseAtLinks(t.descripcion)}</p>
+                            <p class="text-sm text-gray-500">Vence: ${t.fecha}</p>
+                          </div>
+                          <div class="space-x-1">
+                            <button onclick="editarTarea(${t.id})" class="text-blue-600 text-sm">Editar</button>
+                            <button onclick="eliminarTarea(${t.id})" class="text-red-600 text-sm">Eliminar</button>
+                          </div>`;
+        lista.appendChild(li);
+      });
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE FICHAS BIBLIOGRÁFICAS
+    // --------------------------------------------------
+    function renderFichas() {
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Fichas bibliográficas</h2>
+        <div class="grid md:grid-cols-2 gap-4 mb-4">
+          <input id="fichaTipo" type="text" placeholder="Tipo (article, book...)" class="border p-2 rounded">
+          <input id="fichaAutor" type="text" placeholder="Autor" class="border p-2 rounded">
+          <input id="fichaTitulo" type="text" placeholder="Título" class="border p-2 rounded">
+          <input id="fichaAnio" type="text" placeholder="Año" class="border p-2 rounded">
+          <input id="fichaEditor" type="text" placeholder="Editorial" class="border p-2 rounded">
+          <input id="fichaUrl" type="text" placeholder="URL o DOI" class="border p-2 rounded">
+          <input id="fichaVinculo" type="text" placeholder="Vincula con @ (proyecto, nota, tarea o archivo)" class="border p-2 rounded w-full">
+        </div>
+        <button onclick="guardarFicha()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar ficha</button>
+        <ul id="listaFichas" class="mt-4 space-y-2"></ul>`;
+      document.getElementById('app').innerHTML = '';
+      document.getElementById('app').appendChild(container);
+      // Asignar función para detectar "@" en el campo de vinculación
+      document.getElementById('fichaVinculo').addEventListener('keydown', handleAtKey);
+      renderizarFichas();
+    }
+
+    function guardarFicha() {
+      const ficha = {
+        tipo: fichaTipo.value.trim(),
+        autor: fichaAutor.value.trim(),
+        titulo: fichaTitulo.value.trim(),
+        anio: fichaAnio.value.trim(),
+        editor: fichaEditor.value.trim(),
+        url: fichaUrl.value.trim(),
+        vinculo: fichaVinculo.value.trim(),
+        proyectoId: proyectoActivo
+      };
+      if(!ficha.titulo){
+        return alert("El título es obligatorio.");
+      }
+      const index = fichas.findIndex(f => f.titulo === ficha.titulo && f.proyectoId === proyectoActivo);
+      if (index >= 0) fichas.splice(index, 1);
+      fichas.push(ficha);
+      localStorage.setItem('fichas', JSON.stringify(fichas));
+      renderizarFichas();
+    }
+
+    function eliminarFicha(titulo) {
+      if (confirm('¿Eliminar esta ficha?')) {
+        fichas = fichas.filter(f => !(f.titulo === titulo && f.proyectoId === proyectoActivo));
+        localStorage.setItem('fichas', JSON.stringify(fichas));
+        renderizarFichas();
+      }
+    }
+
+    function editarFicha(titulo) {
+      const f = fichas.find(f => f.titulo === titulo && f.proyectoId === proyectoActivo);
+      if (!f) return;
+      fichaTipo.value = f.tipo;
+      fichaAutor.value = f.autor;
+      fichaTitulo.value = f.titulo;
+      fichaAnio.value = f.anio;
+      fichaEditor.value = f.editor;
+      fichaUrl.value = f.url;
+      fichaVinculo.value = f.vinculo ? f.vinculo : "";
+    }
+
+    function renderizarFichas() {
+      const lista = document.getElementById('listaFichas');
+      lista.innerHTML = '';
+      const filtradas = fichas.filter(f => f.proyectoId === proyectoActivo);
+      filtradas.forEach(f => {
+        const fichaId = "ficha-" + slugify(f.titulo);
+        const li = document.createElement('li');
+        li.id = fichaId;
+        li.className = 'bg-white p-3 rounded shadow';
+        li.innerHTML = `
+          <div class="flex justify-between items-center">
+            <span><strong>${f.tipo}</strong> - ${f.autor}, <em>${f.titulo}</em> (${f.anio})</span>
+            <div class="space-x-1">
+              <button onclick="editarFicha('${f.titulo}')" class="text-blue-600 text-sm">Editar</button>
+              <button onclick="eliminarFicha('${f.titulo}')" class="text-red-600 text-sm">Eliminar</button>
+              <button onclick="exportFichaBibTeX('${f.titulo}')" class="text-purple-600 text-sm">BibTeX</button>
+            </div>
+          </div>
+          ${f.url ? `<a href='${f.url}' target='_blank' class='enlace'>Enlace</a>` : ""}
+          ${f.vinculo ? `<p class="text-sm mt-1">Vinculación: ${parseAtLinks(f.vinculo)}</p>` : ""}
+        `;
+        lista.appendChild(li);
+      });
+    }
+
+    // Función para exportar una ficha a BibTeX (para Zotero)
+    function exportFichaBibTeX(titulo) {
+      const f = fichas.find(f => f.titulo === titulo && f.proyectoId === proyectoActivo);
+      if (!f) return alert("Ficha no encontrada.");
+      const key = slugify(f.titulo);
+      const bibtex = `@misc{${key},
+  title = {${f.titulo}},
+  author = {${f.autor}},
+  year = {${f.anio}},
+  howpublished = {${f.editor}},
+  note = {${f.vinculo}},
+  url = {${f.url}}
+}`;
+      const blob = new Blob([bibtex], { type: "text/plain" });
+      const urlBib = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = urlBib;
+      a.download = `${key}.bib`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(urlBib);
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE ARCHIVOS
+    // --------------------------------------------------
+    function renderArchivos() {
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Archivos</h2>
+        <input type="file" id="archivoInput" class="border p-2 rounded w-full mb-2">
+        <input type="text" id="nombreNotaArchivo" placeholder="Asociar con @ (p.ej., nota:Titulo)" class="border p-2 rounded w-full mb-2">
+        <button onclick="guardarArchivo()" class="bg-green-600 text-white px-4 py-2 rounded">Guardar archivo</button>
+        <ul id="listaArchivos" class="space-y-2 mt-4"></ul>`;
+      document.getElementById('app').innerHTML = '';
+      document.getElementById('app').appendChild(container);
+      renderizarArchivos();
+    }
+
+    function guardarArchivo() {
+      const input = document.getElementById('archivoInput');
+      const file = input.files[0];
+      const nota = document.getElementById('nombreNotaArchivo').value.trim();
+      if (!file || !proyectoActivo) return alert('Faltan datos');
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        archivos.push({
+          nombre: file.name,
+          contenido: e.target.result,
+          nota,
+          proyectoId: proyectoActivo
+        });
+        localStorage.setItem('archivos', JSON.stringify(archivos));
+        renderizarArchivos();
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function eliminarArchivo(nombre) {
+      if(confirm("¿Eliminar este archivo?")){
+        archivos = archivos.filter(a => !(a.nombre === nombre && a.proyectoId === proyectoActivo));
+        localStorage.setItem('archivos', JSON.stringify(archivos));
+        renderizarArchivos();
+      }
+    }
+
+    function renderizarArchivos() {
+      const lista = document.getElementById('listaArchivos');
+      lista.innerHTML = '';
+      const filtrados = archivos.filter(a => a.proyectoId === proyectoActivo);
+      filtrados.forEach(a => {
+        const archivoId = "archivo-" + slugify(a.nombre);
+        const li = document.createElement('li');
+        li.id = archivoId;
+        li.className = 'bg-white p-3 rounded shadow flex justify-between items-center';
+        li.innerHTML = `<div>
+                          <strong>${a.nombre}</strong><br>
+                          ${a.nota ? `Asociado: ${parseAtLinks("@" + "notas:" + a.nota)}` : ""}
+                        </div>
+                        <div>
+                          <a href='${a.contenido}' download='${a.nombre}' class="enlace mr-2">Descargar</a>
+                          <button onclick="eliminarArchivo('${a.nombre}')" class="text-red-600 text-sm">Eliminar</button>
+                        </div>`;
+        lista.appendChild(li);
+      });
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE BÚSQUEDA (GLOBAL)
+    // --------------------------------------------------
+    function renderBusqueda() {
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Búsqueda</h2>
+        <input type="text" id="queryBusqueda" placeholder="Buscar..." class="border p-2 rounded w-full mb-2">
+        <button onclick="realizarBusqueda()" class="bg-blue-600 text-white px-4 py-2 rounded">Buscar</button>
+        <div id="resultadosBusqueda" class="mt-4"></div>`;
+      document.getElementById('app').innerHTML = '';
+      document.getElementById('app').appendChild(container);
+    }
+
+    function realizarBusqueda() {
+      const query = document.getElementById('queryBusqueda').value.toLowerCase();
+      if(!query) return alert("Ingresa una palabra o frase para buscar.");
+      const resultadosDiv = document.getElementById('resultadosBusqueda');
+      resultadosDiv.innerHTML = "";
+      let resultados = { notas: [], tareas: [], fichas: [], archivos: [] };
+
+      // Buscar en notas
+      notas.forEach(n => {
+        if(n.titulo.toLowerCase().includes(query) || n.contenido.toLowerCase().includes(query))
+          resultados.notas.push(n);
+      });
+      // Buscar en tareas
+      tareas.forEach(t => {
+        if(t.titulo.toLowerCase().includes(query) || t.descripcion.toLowerCase().includes(query))
+          resultados.tareas.push(t);
+      });
+      // Buscar en fichas
+      fichas.forEach(f => {
+        if(f.titulo.toLowerCase().includes(query) || f.autor.toLowerCase().includes(query) || f.tipo.toLowerCase().includes(query))
+          resultados.fichas.push(f);
+      });
+      // Buscar en archivos
+      archivos.forEach(a => {
+        if(a.nombre.toLowerCase().includes(query) || (a.nota && a.nota.toLowerCase().includes(query)))
+          resultados.archivos.push(a);
+      });
+      
+      let html = "";
+      if(resultados.notas.length) {
+        html += "<h3 class='text-xl font-semibold mt-4'>Notas</h3><ul>";
+        resultados.notas.forEach(n => {
+          html += `<li><a href="#" class="enlace" onclick="abrirNotaBusqueda('${n.titulo}', ${n.proyectoId})">${n.titulo}</a></li>`;
+        });
+        html += "</ul>";
+      }
+      if(resultados.tareas.length) {
+        html += "<h3 class='text-xl font-semibold mt-4'>Tareas</h3><ul>";
+        resultados.tareas.forEach(t => {
+          html += `<li><a href="#" class="enlace" onclick="abrirTareaBusqueda('${t.titulo}', ${t.proyectoId})">${t.titulo}</a></li>`;
+        });
+        html += "</ul>";
+      }
+      if(resultados.fichas.length) {
+        html += "<h3 class='text-xl font-semibold mt-4'>Fichas bibliográficas</h3><ul>";
+        resultados.fichas.forEach(f => {
+          html += `<li><a href="#" class="enlace" onclick="abrirFichaBusqueda('${f.titulo}', ${f.proyectoId})">${f.titulo}</a></li>`;
+        });
+        html += "</ul>";
+      }
+      if(resultados.archivos.length) {
+        html += "<h3 class='text-xl font-semibold mt-4'>Archivos</h3><ul>";
+        resultados.archivos.forEach(a => {
+          html += `<li><a href="#" class="enlace" onclick="abrirArchivoBusqueda('${a.nombre}', ${a.proyectoId})">${a.nombre}</a></li>`;
+        });
+        html += "</ul>";
+      }
+      if(html === "") { html = "<p>No se encontraron resultados.</p>"; }
+      resultadosDiv.innerHTML = html;
+    }
+
+    // Funciones para abrir documentos desde la búsqueda (asignando proyecto activo)
+    function abrirNotaBusqueda(titulo, idProyecto) {
+      proyectoActivo = idProyecto;
+      mostrarSeccion('notas');
+      setTimeout(() => {
+        let el = document.getElementById("nota-" + slugify(titulo));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+    function abrirTareaBusqueda(titulo, idProyecto) {
+      proyectoActivo = idProyecto;
+      mostrarSeccion('tareas');
+      setTimeout(() => {
+        let el = document.getElementById("tarea-" + slugify(titulo));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+    function abrirFichaBusqueda(titulo, idProyecto) {
+      proyectoActivo = idProyecto;
+      mostrarSeccion('fichas');
+      setTimeout(() => {
+        let el = document.getElementById("ficha-" + slugify(titulo));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+    function abrirArchivoBusqueda(nombre, idProyecto) {
+      proyectoActivo = idProyecto;
+      mostrarSeccion('archivos');
+      setTimeout(() => {
+        let el = document.getElementById("archivo-" + slugify(nombre));
+        if(el) el.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+    }
+
+    // --------------------------------------------------
+    // MÓDULO DE EXPORTACIÓN DE PROYECTO A PDF
+    // --------------------------------------------------
+    function renderExportar() {
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <h2 class="text-2xl font-bold mb-4">Exportar proyecto a PDF</h2>
+        <button onclick="exportarProyectoCompleto()" class="bg-blue-600 text-white px-4 py-2 rounded">Generar PDF</button>`;
+      document.getElementById('app').innerHTML = '';
+      document.getElementById('app').appendChild(container);
+    }
+
+    function exportarProyectoCompleto() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const margin = 10;
+      let y = margin;
+      const lineHeight = 10;
+      const p = proyectos.find(p => p.id === proyectoActivo);
+      if(!p) return alert("Proyecto no encontrado.");
+      
+      doc.setFontSize(16);
+      doc.text("Proyecto: " + p.titulo, margin, y);
+      y += lineHeight;
+      doc.setFontSize(12);
+      doc.text("Resumen: " + p.resumen, margin, y);
+      y += lineHeight * 2;
+      
+      // Sección de Notas
+      doc.setFontSize(14);
+      doc.text("Notas", margin, y);
+      y += lineHeight;
+      const notasDelProyecto = notas.filter(n => n.proyectoId === proyectoActivo);
+      notasDelProyecto.forEach(n => {
+        doc.setFontSize(12);
+        doc.text("Título: " + n.titulo, margin, y);
+        y += lineHeight;
+        let contenido = n.contenido.replace(/<[^>]*>/g, "");
+        doc.text("Contenido: " + contenido, margin, y);
+        y += lineHeight * 2;
+        if(y > 280) { doc.addPage(); y = margin; }
+      });
+      
+      // Sección de Tareas
+      doc.setFontSize(14);
+      doc.text("Tareas", margin, y);
+      y += lineHeight;
+      const tareasDelProyecto = tareas.filter(t => t.proyectoId === proyectoActivo);
+      tareasDelProyecto.forEach(t => {
+        doc.setFontSize(12);
+        doc.text("Título: " + t.titulo, margin, y);
+        y += lineHeight;
+        doc.text("Descripción: " + t.descripcion, margin, y);
+        y += lineHeight;
+        doc.text("Fecha: " + t.fecha, margin, y);
+        y += lineHeight * 2;
+        if(y > 280) { doc.addPage(); y = margin; }
+      });
+      
+      // Sección de Fichas
+      doc.setFontSize(14);
+      doc.text("Fichas bibliográficas", margin, y);
+      y += lineHeight;
+      const fichasDelProyecto = fichas.filter(f => f.proyectoId === proyectoActivo);
+      fichasDelProyecto.forEach(f => {
+        doc.setFontSize(12);
+        let fichaText = f.tipo + " - " + f.autor + ": " + f.titulo + " (" + f.anio + ")";
+        if(f.vinculo) {
+          fichaText += " Vinculado: " + f.vinculo.replace(/<[^>]*>/g, "");
+        }
+        doc.text(fichaText, margin, y);
+        y += lineHeight * 2;
+        if(y > 280) { doc.addPage(); y = margin; }
+      });
+      
+      doc.save(p.titulo + ".pdf");
+    }
+
+    // --------------------------------------------------
+    // FUNCIONES DE BACKUP Y RESTAURACIÓN
+    // --------------------------------------------------
+    // Genera un archivo JSON con todos los datos y lo descarga
+    function backupDatos() {
+      const backup = { proyectos, notas, tareas, fichas, archivos };
+      const dataStr = JSON.stringify(backup, null, 2);
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const urlBackup = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = urlBackup;
+      a.download = "backup_gestor.json";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(urlBackup);
+    }
+
+    // Activa el input de archivo para restaurar backup
+    function restoreBackupDatos() {
+      document.getElementById("backupInput").click();
+    }
+
+    // Lee el fichero de backup y actualiza las variables y localStorage
+    function handleBackupFile(event) {
+      const file = event.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const data = JSON.parse(e.target.result);
+          proyectos = data.proyectos || [];
+          notas = data.notas || [];
+          tareas = data.tareas || [];
+          fichas = data.fichas || [];
+          archivos = data.archivos || [];
+          localStorage.setItem('proyectos', JSON.stringify(proyectos));
+          localStorage.setItem('notas', JSON.stringify(notas));
+          localStorage.setItem('tareas', JSON.stringify(tareas));
+          localStorage.setItem('fichas', JSON.stringify(fichas));
+          localStorage.setItem('archivos', JSON.stringify(archivos));
+          alert("Copia de seguridad restaurada con éxito.");
+          renderProyectos();
+        } catch (err) {
+          alert("Error al restaurar la copia de seguridad.");
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    // --------------------------------------------------
+    // INICIALIZACIÓN: Se muestra la lista de proyectos al cargar la página
+    // --------------------------------------------------
+    window.onload = () => {
+      renderProyectos();
+    };
+  </script>
+</body>
+</html>
